@@ -5,6 +5,8 @@
 #include <unistd.h>		// for use of ualarm()
 #include <signal.h>		// for signal handler
 #include <stdbool.h>	// for bool type
+#include <semaphore.h>
+
 
 /* for states */
 #define DEFAULT 0		// define the initial DEFAULT state (when struct thread is initialized, state is defaulted to 0)
@@ -56,7 +58,16 @@ int num_queued_threads = 0;			// there are currently 0 actively queued threads
 unsigned int new_thread_id = 1;		// first thread ID that is usuable
 struct sigaction handler;			// create a signal handler globally
 
-/*
+//START OF SEMAPHORE CREATE
+
+int qindex = 0;
+
+struct Queue
+{
+  pthread_t array[MAX_TH];
+};
+
+
 struct semaphore
 {
   int id;
@@ -69,8 +80,8 @@ struct semaphore
 };
 
 struct semaphore mysems[MAX_TH];
-*/
 
+//END OF SEMAPHORE CREATE
 
 void schedule();					// function prototype for signal(SIGALRM, schedule) to work
 
@@ -234,7 +245,109 @@ int pthread_join(pthread_t thread, void **value_ptr)
 	return 0;
 }
 
+//START OF SEMAPHORES
 
+int sem_init(sem_t *sem, int pshared, unsigned value)
+{
+  int curr;
+  for(curr = 0; curr < MAX_TH; curr++) //finds next unitialized semaphore
+    {
+      if(mysems[curr].flag == 0)
+	{
+	  break;
+	}
+    }
+
+  sem->__align = curr; //gives the id of sem to curr for indexing
+  mysems[curr].id = curr;
+  mysems[curr].flag = 1; //initalized
+  mysems[curr].val = value;
+  mysems[curr].q = malloc(sizeof(struct Queue)); //create queue
+
+  mysems[curr].head = -1; //makes sure these aren't set to zero, causes indexing problems
+  mysems[curr].tail = -1;
+
+  return 0;
+}
+
+int sem_wait(sem_t *sem)
+{
+  int curr = sem->__align;
+
+  if(mysems[curr].val > 0) //basic locking
+    {
+      mysems[curr].val--;
+      qindex = active_thread_index;
+      lock();
+      return 0;
+    }
+  
+  while(mysems[curr].val == 0 && active_thread_index != qindex) //if val is zero, but queue index is not synced with thread index
+    {
+      if(mysems[curr].head == -1 && mysems[curr].tail == -1) //creates first threads if none mader yet
+	{
+	  mysems[curr].head = 0;
+	  mysems[curr].tail = 0;
+	  mysems[curr].q -> array[mysems[curr].tail] = threads[active_thread_index].thread_id;
+	  mysems[curr].numthreads++; //new threads created
+      
+	}
+      else if(mysems[curr].q -> array[mysems[curr].tail] != threads[active_thread_index].thread_id) //if the tail contents is not the current thread
+	{
+	  mysems[curr].tail++;
+	  mysems[curr].q -> array[mysems[curr].tail] = threads[active_thread_index].thread_id;
+	  mysems[curr].numthreads++;
+	}
+
+      mysems[curr].numthreads--; //decrement threads
+    
+      if(mysems[curr].numthreads != 0) //locking after adding threads
+	{
+	  mysems[curr].head = qindex;
+	  mysems[curr].head++;
+	  mysems[curr].numthreads++;
+	  lock();
+	  return 0;
+	}
+
+    }
+
+  return 0;
+
+}
+
+int sem_post(sem_t *sem)
+{
+  int curr = sem->__align;
+  if(mysems[curr].val > 0 && mysems[curr].id == curr) //if val > 0 and in correct semaphore
+    {
+      mysems[curr].val++; //basic unlocking
+    }
+  unlock();
+  return 0;
+}
+
+int sem_destroy(sem_t *sem)
+{
+  int curr = sem->__align;
+  if(mysems[curr].id == curr && mysems[curr].flag == 1 && mysems[curr].numthreads == 0) //if right sem, intialized, and no more threads waiting
+    {
+      mysems[curr].id = 0;
+      mysems[curr].val = 0;
+      mysems[curr].q = NULL;
+      mysems[curr].flag = 0;
+      mysems[curr].head = -1;
+      mysems[curr].tail = -1;
+    }
+
+  return 0;
+}
+
+
+
+
+
+//END OF SEMAPHORES
 
 
 
